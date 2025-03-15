@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>gequbao.com MP3 Downloader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" rel="stylesheet"/>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+    body { font-family: 'Roboto', sans-serif; }
+    /* Jangan larang paste di input */
+    body:not(input):not(textarea) {
+    	-webkit-user-select: none;
+    	-moz-user-select: none;
+    	-ms-user-select: none;
+    	user-select: none;
+    }
+
+    #lyrics p {
+      transition: all 0.3s ease;
+    }
+    #lyrics p.active {
+      color: #2563eb;
+      font-weight: 600;
+    }
+    a#downloadLink {
+    	pointer-events: none; /* Tidak bisa di-klik kanan atau disalin */
+    	user-select: none;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+  <div class="bg-white shadow-lg rounded-lg p-8 w-full max-w-md">
+    <h2 class="text-2xl font-bold mb-6 text-center">gequbao.com<br/>MP3 Downloader</h2>
+
+    <div class="relative">
+      <input id="urlInput" type="text" placeholder="Masukkan URL: https://www.gequbao.com/music/11719" class="border border-gray-300 rounded-lg p-3 w-full focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      <button onclick="getInfoAndDownload()" class="bg-blue-500 text-white rounded-lg p-3 w-full mt-4 hover:bg-blue-600 transition duration-300">Search</button>
+      <div id="loadingSpinner" class="hidden absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+        <i class="fas fa-spinner fa-spin text-blue-500 text-3xl"></i>
+      </div>
+    </div>
+
+    <div id="previewBox" class="preview mt-8 hidden">
+      <h3 id="songName" class="text-xl font-semibold mb-4">Preview Lagu</h3>
+      <img id="thumbnail" src="" alt="Thumbnail Lagu" class="thumbnail w-full rounded-lg mb-4" height="200" width="200"/>
+      <audio id="audioPlayer" controls class="w-full mb-4"></audio>
+      <!-- Tombol Download: Tanpa href langsung terlihat -->
+      <button onclick="triggerDownload()" class="bg-green-500 text-white rounded-lg p-3 w-full text-center block hover:bg-green-600 transition duration-300">
+      Download MP3
+      </button>
+      
+      <!-- Link asli disembunyikan dari DOM -->
+      <a id="downloadLink" href="#" style="display:none"></a>
+      
+
+      <!-- Lirik Section -->
+      <div class="mt-6 hidden" id="lyricsBox">
+        <h3 class="text-lg font-semibold mb-2">Lirik Lagu</h3>
+        <div id="lyricsContainer" class="bg-gray-100 p-3 rounded max-h-64 overflow-y-auto text-sm space-y-1 relative">
+          <div id="lyrics"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function getInfoAndDownload() {
+      const url = document.getElementById("urlInput").value.trim();
+      if (!url.includes("/music/")) {
+        alert("URL tidak valid!");
+        return;
+      }
+
+      document.getElementById("loadingSpinner").classList.remove("hidden");
+
+      try {
+        const res = await fetch(url);
+        const html = await res.text();
+
+        const playIdMatch = html.match(/window\.play_id\s*=\s*'([^']+)'/);
+        const titleMatch = html.match(/window\.mp3_title\s*=\s*'([^']+)'/);
+        const authorMatch = html.match(/window\.mp3_author\s*=\s*'([^']+)'/);
+        const coverMatch = html.match(/window\.mp3_cover\s*=\s*'([^']+)'/);
+
+        if (!playIdMatch) {
+          alert("play_id tidak ditemukan!");
+          document.getElementById("loadingSpinner").classList.add("hidden");
+          return;
+        }
+
+        const play_id = playIdMatch[1];
+        const title = titleMatch ? titleMatch[1] : "Unknown Title";
+        const author = authorMatch ? authorMatch[1] : "Unknown Artist";
+        const cover = coverMatch ? "https://images.weserv.nl/?url=" + coverMatch[1].replace("http://", "") : "https://placehold.co/200x200";
+
+        const response = await fetch("https://www.gequbao.com/api/play-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `id=${play_id}`
+        });
+
+        const result = await response.json();
+
+        if (result.code === 1) {
+          const mp3Url = result.data.url;
+
+          document.getElementById("songName").textContent = `${title} - ${author}`;
+          document.getElementById("thumbnail").src = cover;
+          document.getElementById("audioPlayer").src = mp3Url;
+          document.getElementById("downloadLink").href = mp3Url;
+          document.getElementById("downloadLink").download = `${title}-${author}.mp3`;
+
+          document.getElementById("previewBox").classList.remove("hidden");
+
+          // Ekstrak Lirik
+          const lrcMatch = html.match(/id="content-lrc">([\s\S]*?)<\/div>/);
+          if (lrcMatch) {
+            const lrcHTML = lrcMatch[1].replace(/<br\s*\/?>/gi, '\n');
+            const lrcArray = parseLRC(lrcHTML);
+            displayLyrics(lrcArray);
+            syncLyrics(document.getElementById("audioPlayer"), lrcArray);
+          }
+
+        } else {
+          alert(result.msg || "Gagal mendapatkan link MP3.");
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert("Terjadi kesalahan saat memproses.");
+      } finally {
+        document.getElementById("loadingSpinner").classList.add("hidden");
+      }
+    }
+    
+    // Atur link download agar hanya bisa diaktifkan via JS
+    function triggerDownload() {
+    	const link = document.createElement('a');
+    	link.href = document.getElementById("downloadLink").href;
+    	link.download = document.getElementById("downloadLink").download;
+    	document.body.appendChild(link);
+    	link.click();
+    	document.body.removeChild(link);
+    }
+
+    function parseLRC(lrcText) {
+      const lines = lrcText.split(/\r?\n/);
+      const lrcData = [];
+      const regex = /\[(\d{2}):(\d{2}(?:\.\d{1,2})?)\](.*)/;
+      for (let line of lines) {
+        const match = line.match(regex);
+        if (match) {
+          const min = parseInt(match[1]);
+          const sec = parseFloat(match[2]);
+          const time = min * 60 + sec;
+          const text = match[3].trim();
+          lrcData.push({ time, text });
+        }
+      }
+      return lrcData.sort((a, b) => a.time - b.time);
+    }
+
+    function displayLyrics(lrcArray) {
+      const container = document.getElementById('lyrics');
+      container.innerHTML = '';
+      lrcArray.forEach((item) => {
+        const line = document.createElement('p');
+        line.textContent = item.text;
+        line.dataset.time = item.time;
+        container.appendChild(line);
+      });
+      document.getElementById('lyricsBox').classList.remove('hidden');
+    }
+
+    function syncLyrics(audio, lrcArray) {
+      const lines = document.querySelectorAll('#lyrics p');
+      const container = document.getElementById('lyricsContainer');
+      let isUserScrolling = false;
+      let scrollTimer = null;
+
+      // Deteksi jika user scroll manual
+      container.addEventListener('scroll', () => {
+        isUserScrolling = true;
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+          isUserScrolling = false;
+        }, 1500); // dianggap selesai scroll setelah 1.5 detik
+      });
+
+      audio.addEventListener('timeupdate', () => {
+        let currentIndex = 0;
+        for (let i = 0; i < lrcArray.length; i++) {
+          if (audio.currentTime >= lrcArray[i].time) {
+            currentIndex = i;
+          }
+        }
+        lines.forEach(p => p.classList.remove('active'));
+        const activeLine = lines[currentIndex];
+        if (activeLine) {
+          activeLine.classList.add('active');
+          if (!isUserScrolling) {
+            const offsetTop = activeLine.offsetTop;
+            const containerHeight = container.clientHeight;
+            container.scrollTo({
+              top: offsetTop - containerHeight / 2 + activeLine.clientHeight / 2,
+              behavior: 'smooth'
+            });
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
